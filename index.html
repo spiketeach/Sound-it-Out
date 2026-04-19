@@ -1,0 +1,530 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Sound It Out</title>
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Fredoka+One&family=Nunito:wght@700;800;900&display=swap" rel="stylesheet">
+    <style>
+        * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+        body { 
+            font-family: 'Nunito', sans-serif; 
+            background: #fff7ed; 
+            margin: 0; 
+            padding: 0;
+            min-height: 100vh;
+            background-image: radial-gradient(circle at 20% 20%, #ffe4c4 0%, transparent 50%),
+                              radial-gradient(circle at 80% 80%, #ffd6e7 0%, transparent 50%);
+        }
+        h1 { font-family: 'Fredoka One', cursive; }
+
+        /* Pulse ring animation for recording */
+        @keyframes pulseRing {
+            0%   { transform: scale(1);   opacity: 0.7; }
+            100% { transform: scale(1.6); opacity: 0; }
+        }
+        .recording-ring::before,
+        .recording-ring::after {
+            content: '';
+            position: absolute;
+            inset: -6px;
+            border-radius: 50%;
+            border: 4px solid #ef4444;
+            animation: pulseRing 1.4s ease-out infinite;
+        }
+        .recording-ring::after { animation-delay: 0.7s; }
+
+        /* Bounce in animation */
+        @keyframes bounceIn {
+            0%   { transform: scale(0.5); opacity: 0; }
+            70%  { transform: scale(1.08); opacity: 1; }
+            100% { transform: scale(1); }
+        }
+        .bounce-in { animation: bounceIn 0.4s cubic-bezier(0.34,1.56,0.64,1) both; }
+
+        /* Word card appear */
+        @keyframes cardPop {
+            0%   { transform: translateY(20px) scale(0.8); opacity: 0; }
+            100% { transform: translateY(0) scale(1); opacity: 1; }
+        }
+        .card-pop { animation: cardPop 0.35s cubic-bezier(0.34,1.56,0.64,1) both; }
+
+        /* Press effect */
+        .btn-press:active { transform: scale(0.88) !important; }
+
+        /* Ear wiggle on tap */
+        @keyframes earWiggle {
+            0%,100% { transform: rotate(0deg); }
+            25%      { transform: rotate(-15deg) scale(1.1); }
+            75%      { transform: rotate(15deg) scale(1.1); }
+        }
+        .ear-wiggle { animation: earWiggle 0.5s ease; }
+
+        /* iOS dictation instruction pulse */
+        @keyframes breathe {
+            0%,100% { transform: scale(1); }
+            50%      { transform: scale(1.04); }
+        }
+        .breathe { animation: breathe 2.5s ease-in-out infinite; }
+
+        /* Floating dots decoration */
+        @keyframes floatDot {
+            0%,100% { transform: translateY(0); }
+            50%      { transform: translateY(-10px); }
+        }
+
+        textarea:focus { outline: none; }
+
+        /* iOS keyboard mic button illustration */
+        .mic-keyboard-hint {
+            background: #1c1c1e;
+            border-radius: 16px;
+            padding: 16px 20px 20px;
+            display: inline-block;
+            position: relative;
+        }
+        .mic-keyboard-hint .key-row {
+            display: flex; gap: 5px; justify-content: center; margin-bottom: 5px;
+        }
+        .mic-key {
+            background: #3a3a3c;
+            border-radius: 6px;
+            color: white;
+            font-size: 13px;
+            font-weight: 700;
+            padding: 8px 10px;
+            min-width: 30px;
+            text-align: center;
+        }
+        .mic-key.highlight {
+            background: #ff6b35;
+            transform: scale(1.15);
+            box-shadow: 0 0 12px rgba(255,107,53,0.7);
+        }
+    </style>
+</head>
+<body class="select-none">
+<div id="root">
+    <div style="display:flex;align-items:center;justify-content:center;minHeight:100vh">
+        <p style="color:#ea580c;font-weight:900;font-size:1.3rem">Loading...</p>
+    </div>
+</div>
+
+<script type="text/babel">
+const { useState, useEffect, useRef, useCallback } = React;
+
+/* ─── Device detection ─── */
+const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+              (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+
+/* ─── Icons (inline SVG) ─── */
+const MicSVG = ({size=56}) => (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/>
+        <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+        <line x1="12" x2="12" y1="19" y2="22"/>
+    </svg>
+);
+const PlaySVG = ({size=48}) => (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" stroke="none">
+        <polygon points="5 3 19 12 5 21 5 3"/>
+    </svg>
+);
+const EarSVG = ({size=48}) => (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M6 8.5a6.5 6.5 0 1 1 13 0c0 6-6 6-6 10a3 3 0 1 1-6 0"/>
+        <path d="M15 8.5a2.5 2.5 0 0 0-5 0v1a2 2 0 1 1 0 4"/>
+    </svg>
+);
+const CheckSVG = ({size=56}) => (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round">
+        <polyline points="20 6 9 17 4 12"/>
+    </svg>
+);
+const PencilSVG = ({size=40}) => (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/>
+        <path d="m15 5 4 4"/>
+    </svg>
+);
+const KeyboardMicSVG = () => (
+    <svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <rect x="2" y="14" width="20" height="8" rx="2"/>
+        <path d="M12 2a3 3 0 0 0-3 3v4a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/>
+        <path d="M17 9v1a5 5 0 0 1-10 0V9"/>
+    </svg>
+);
+
+/* ─── Voice helper ─── */
+const getBestVoice = () => {
+    const voices = window.speechSynthesis.getVoices();
+    return (
+        voices.find(v => v.name.includes('Google UK English Female')) ||
+        voices.find(v => v.name.includes('Microsoft Hazel')) ||
+        voices.find(v => v.name.includes('Serena')) ||
+        voices.find(v => v.lang === 'en-GB') ||
+        voices.find(v => v.lang.startsWith('en'))
+    );
+};
+
+const speak = (text, type = 'sentence') => {
+    window.speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(text);
+    u.lang = 'en-GB';
+    u.voice = getBestVoice();
+    if (type === 'word') { u.rate = 0.4; u.pitch = 1.15; }
+    else { u.rate = 0.85; }
+    window.speechSynthesis.speak(u);
+};
+
+/* ─── Word card ─── */
+const WordCard = ({ word, index }) => {
+    const [wiggling, setWiggling] = useState(false);
+    const handleTap = () => {
+        speak(word, 'word');
+        setWiggling(true);
+        setTimeout(() => setWiggling(false), 550);
+    };
+    return (
+        <div className="card-pop flex flex-col items-center gap-3" style={{animationDelay:`${index*0.07}s`}}>
+            <button
+                onClick={handleTap}
+                className="btn-press flex flex-col items-center justify-center gap-1 shadow-lg transition-transform"
+                style={{
+                    width: 96, height: 96,
+                    borderRadius: 28,
+                    background: 'linear-gradient(145deg, #a855f7, #7c3aed)',
+                    color: 'white',
+                    border: '4px solid rgba(255,255,255,0.4)',
+                    boxShadow: '0 6px 24px rgba(124,58,237,0.4)',
+                }}
+            >
+                <span className={wiggling ? 'ear-wiggle' : ''} style={{display:'flex',alignItems:'center',justifyContent:'center'}}>
+                    <EarSVG size={44}/>
+                </span>
+            </button>
+            <div style={{height:6, width:'90%', background:'#e2e8f0', borderRadius:99}}/>
+        </div>
+    );
+};
+
+/* ─── iOS dictation panel ─── */
+const IOSDictationPanel = ({ transcript, onChange, onAnalyse }) => (
+    <div className="w-full flex flex-col items-center gap-5 mt-4">
+        {/* Big friendly instruction */}
+        <div className="breathe flex flex-col items-center gap-3 bg-white rounded-3xl px-8 py-6 shadow-xl w-full max-w-sm" style={{border:'4px solid #fb923c'}}>
+            <div style={{color:'#ea580c'}}>
+                <KeyboardMicSVG/>
+            </div>
+            <p className="text-center font-black text-orange-700" style={{fontSize:'1.35rem',lineHeight:1.3}}>
+                Tap below, then press<br/>
+                <span style={{color:'#ea580c',fontSize:'1.6rem'}}>🎤</span> on the keyboard!
+            </p>
+            {/* Mini keyboard illustration */}
+            <div className="mic-keyboard-hint">
+                <div className="key-row">
+                    {['Q','W','E','R','T','Y'].map(k=>(
+                        <div key={k} className="mic-key">{k}</div>
+                    ))}
+                </div>
+                <div className="key-row" style={{marginTop:0}}>
+                    <div className="mic-key" style={{flex:1,fontSize:'10px'}}>space</div>
+                    <div className="mic-key highlight">🎤</div>
+                    <div className="mic-key" style={{fontSize:'10px'}}>⏎</div>
+                </div>
+                <p style={{color:'#aaa',fontSize:'10px',textAlign:'center',marginTop:6,marginBottom:0}}>tap the orange mic!</p>
+            </div>
+        </div>
+
+        {/* Text area */}
+        <textarea
+            value={transcript}
+            onChange={e => onChange(e.target.value)}
+            placeholder="Your words will appear here…"
+            className="w-full max-w-sm font-black rounded-2xl p-4 text-slate-700"
+            style={{
+                fontSize:'1.4rem',
+                minHeight: 100,
+                border: '4px solid #fb923c',
+                background:'white',
+                resize:'none',
+                boxShadow:'0 4px 16px rgba(234,88,12,0.15)',
+                lineHeight: 1.4,
+            }}
+            inputMode="text"
+            autoComplete="off"
+            autoCorrect="on"
+            spellCheck="false"
+        />
+
+        {transcript.trim().length > 0 && (
+            <button
+                onClick={onAnalyse}
+                className="btn-press bounce-in flex items-center gap-3 font-black text-white shadow-2xl"
+                style={{
+                    padding: '18px 48px',
+                    borderRadius: 20,
+                    fontSize: '2rem',
+                    background: 'linear-gradient(135deg, #f59e0b, #f97316)',
+                    border: '4px solid rgba(255,255,255,0.4)',
+                    boxShadow: '0 8px 24px rgba(245,158,11,0.45)',
+                    letterSpacing: '0.05em',
+                }}
+            >
+                <PencilSVG size={36}/> WRITE
+            </button>
+        )}
+    </div>
+);
+
+/* ─── Main App ─── */
+const App = () => {
+    const [isRecording, setIsRecording]   = useState(false);
+    const [transcript,  setTranscript]    = useState('');
+    const [words,       setWords]         = useState([]);
+    const [isAnalyzed,  setIsAnalyzed]    = useState(false);
+    const [status,      setStatus]        = useState(isIOS ? 'Tap the red button to start!' : 'Tap the red button and speak!');
+    const [showTeacher, setShowTeacher]   = useState(false);
+    const [iosInput,    setIosInput]      = useState(false);
+
+    const recognition = useRef(null);
+    const textareaRef = useRef(null);
+
+    /* Load voices after they're ready */
+    useEffect(() => {
+        window.speechSynthesis.onvoiceschanged = () => {};
+        window.speechSynthesis.getVoices();
+    }, []);
+
+    /* Set up speech recognition (non-iOS only) */
+    useEffect(() => {
+        if (isIOS) return;
+        const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+        if (!SR) return;
+        recognition.current = new SR();
+        recognition.current.lang = 'en-GB';
+        recognition.current.continuous = false;
+        recognition.current.onresult = e => {
+            const text = e.results[0][0].transcript;
+            setTranscript(text);
+            setIsRecording(false);
+            setStatus('Brilliant! I heard you! 🎉');
+        };
+        recognition.current.onerror = () => {
+            setIsRecording(false);
+            setStatus("I didn't catch that. Try again!");
+        };
+        recognition.current.onend = () => setIsRecording(false);
+    }, []);
+
+    const toggleRecording = () => {
+        if (isIOS) {
+            /* Show the iOS dictation panel */
+            setTranscript('');
+            setIsAnalyzed(false);
+            setIosInput(true);
+            setStatus('Use the keyboard mic to speak!');
+            return;
+        }
+        if (!recognition.current) {
+            alert('Speech recognition needs Chrome or Edge.');
+            return;
+        }
+        if (isRecording) {
+            recognition.current.stop();
+        } else {
+            setTranscript('');
+            setIsAnalyzed(false);
+            setShowTeacher(false);
+            recognition.current.start();
+            setIsRecording(true);
+            setStatus('Listening…');
+        }
+    };
+
+    const analyseSentence = () => {
+        const clean = transcript.replace(/[^\w\s']/g, '').split(/\s+/).filter(Boolean);
+        setWords(clean);
+        setIsAnalyzed(true);
+        setIosInput(false);
+        setStatus('Tap each ear to hear the sounds!');
+    };
+
+    const reset = () => {
+        setTranscript('');
+        setWords([]);
+        setIsAnalyzed(false);
+        setIosInput(false);
+        setShowTeacher(false);
+        setStatus(isIOS ? 'Tap the red button to start!' : 'Tap the red button and speak!');
+    };
+
+    /* ── Render ── */
+    return (
+        <div className="min-h-screen flex flex-col items-center px-4 pb-10 pt-6">
+            {/* Title */}
+            <h1 className="font-black text-center mb-5 tracking-tight"
+                style={{fontSize:'clamp(2rem,6vw,3rem)', color:'#ea580c', textShadow:'2px 3px 0 rgba(234,88,12,0.2)', fontFamily:"'Fredoka One', cursive"}}>
+                🔊 SOUND IT OUT
+            </h1>
+
+            {/* Status banner */}
+            <div className="w-full max-w-md rounded-3xl px-6 py-4 mb-6 text-center"
+                 style={{background:'white', border:'4px solid #fed7aa', boxShadow:'0 4px 20px rgba(234,88,12,0.12)'}}>
+                <p className="font-black text-orange-600" style={{fontSize:'1.25rem', lineHeight:1.3}}>
+                    {isRecording ? '🎙 Listening…' : status}
+                </p>
+            </div>
+
+            {/* ── iOS dictation panel ── */}
+            {iosInput && !isAnalyzed && (
+                <IOSDictationPanel
+                    transcript={transcript}
+                    onChange={val => setTranscript(val)}
+                    onAnalyse={analyseSentence}
+                />
+            )}
+
+            {/* ── Main buttons (always shown when not in iOS input mode) ── */}
+            {!iosInput && (
+                <div className="flex gap-10 items-end justify-center mb-6">
+                    {/* MIC */}
+                    <div className="flex flex-col items-center gap-3">
+                        <div className="relative flex items-center justify-center">
+                            {isRecording && <div className="recording-ring" style={{position:'absolute',inset:0,borderRadius:'50%'}}/>}
+                            <button
+                                onClick={toggleRecording}
+                                className="btn-press relative z-10 flex items-center justify-center"
+                                style={{
+                                    width:120, height:120,
+                                    borderRadius:'50%',
+                                    background: isRecording ? '#ef4444' : 'linear-gradient(145deg,#f87171,#ef4444)',
+                                    color:'white',
+                                    border:'6px solid white',
+                                    boxShadow:'0 8px 32px rgba(239,68,68,0.5)',
+                                    transition:'all 0.15s',
+                                }}
+                            >
+                                <MicSVG size={56}/>
+                            </button>
+                        </div>
+                        <span className="font-black uppercase tracking-wider text-red-600" style={{fontSize:'1.1rem'}}>Speak</span>
+                    </div>
+
+                    {/* HEAR ALL */}
+                    <div className="flex flex-col items-center gap-3">
+                        <button
+                            onClick={() => speak(transcript)}
+                            disabled={!transcript}
+                            className="btn-press flex items-center justify-center"
+                            style={{
+                                width:120, height:120,
+                                borderRadius:'50%',
+                                background:'linear-gradient(145deg,#60a5fa,#3b82f6)',
+                                color:'white',
+                                border:'6px solid white',
+                                boxShadow:'0 8px 32px rgba(59,130,246,0.4)',
+                                opacity: transcript ? 1 : 0.3,
+                                transition:'all 0.15s',
+                            }}
+                        >
+                            <PlaySVG size={52}/>
+                        </button>
+                        <span className="font-black uppercase tracking-wider text-blue-600" style={{fontSize:'1.1rem'}}>Hear All</span>
+                    </div>
+                </div>
+            )}
+
+            {/* WRITE button (non-iOS, after transcript) */}
+            {!isIOS && transcript && !isAnalyzed && !isRecording && (
+                <button
+                    onClick={analyseSentence}
+                    className="btn-press bounce-in flex items-center gap-3 font-black text-white mb-8"
+                    style={{
+                        padding: '18px 48px',
+                        borderRadius: 20,
+                        fontSize: '2rem',
+                        background: 'linear-gradient(135deg, #f59e0b, #f97316)',
+                        border: '4px solid rgba(255,255,255,0.4)',
+                        boxShadow: '0 8px 24px rgba(245,158,11,0.45)',
+                        letterSpacing: '0.05em',
+                    }}
+                >
+                    <PencilSVG size={36}/> WRITE
+                </button>
+            )}
+
+            {/* WORD CARDS */}
+            {isAnalyzed && (
+                <div className="w-full max-w-2xl rounded-3xl p-8 mb-8 bounce-in"
+                     style={{background:'white', border:'4px solid #e9d5ff', boxShadow:'0 8px 40px rgba(124,58,237,0.15)'}}>
+                    <div className="flex flex-wrap justify-center gap-6 items-end">
+                        {words.map((w, i) => <WordCard key={i} word={w} index={i}/>)}
+                        {/* Full stop */}
+                        <div className="card-pop flex flex-col items-center gap-3" style={{animationDelay:`${words.length*0.07}s`}}>
+                            <div className="flex items-center justify-center font-black text-white shadow-lg"
+                                 style={{width:96,height:96,borderRadius:28,background:'linear-gradient(145deg,#475569,#1e293b)',fontSize:'3.5rem',border:'4px solid rgba(255,255,255,0.3)'}}>
+                                .
+                            </div>
+                            <div style={{height:6,width:'90%',background:'#e2e8f0',borderRadius:99}}/>
+                        </div>
+                    </div>
+                    <p className="text-center mt-8 font-black tracking-widest uppercase text-purple-400" style={{fontSize:'1rem'}}>
+                        Tap the ears to hear each word
+                    </p>
+                </div>
+            )}
+
+            {/* iOS: show Hear All and Write separately */}
+            {iosInput && transcript && (
+                <div className="flex gap-6 mt-2 mb-4">
+                    <button
+                        onClick={() => speak(transcript)}
+                        className="btn-press flex items-center justify-center"
+                        style={{width:80,height:80,borderRadius:'50%',background:'linear-gradient(145deg,#60a5fa,#3b82f6)',color:'white',border:'4px solid white',boxShadow:'0 6px 20px rgba(59,130,246,0.4)'}}
+                    >
+                        <PlaySVG size={36}/>
+                    </button>
+                </div>
+            )}
+
+            {/* FINISHED button */}
+            <div className="mt-4 flex flex-col items-center gap-2">
+                <button
+                    onClick={reset}
+                    className="btn-press flex items-center justify-center"
+                    style={{
+                        width:120, height:120,
+                        borderRadius:'50%',
+                        background:'linear-gradient(145deg,#34d399,#10b981)',
+                        color:'white',
+                        border:'6px solid white',
+                        boxShadow:'0 8px 32px rgba(16,185,129,0.45)',
+                    }}
+                >
+                    <CheckSVG size={56}/>
+                </button>
+                <span className="font-black uppercase tracking-wider text-emerald-600" style={{fontSize:'1.25rem'}}>Finished</span>
+            </div>
+
+            {/* Teacher view */}
+            {transcript && (
+                <div className="mt-8 flex flex-col items-center" style={{opacity:0.2}} onMouseEnter={e=>e.currentTarget.style.opacity=1} onMouseLeave={e=>e.currentTarget.style.opacity=0.2} onTouchStart={e=>e.currentTarget.style.opacity=1} onTouchEnd={e=>e.currentTarget.style.opacity=0.2}>
+                    <button onClick={() => setShowTeacher(!showTeacher)} style={{fontSize:'0.65rem',color:'#94a3b8'}}>
+                        {showTeacher ? 'Hide Teacher View' : 'Show Teacher View'}
+                    </button>
+                    {showTeacher && <p style={{fontSize:'0.75rem',color:'#64748b',fontStyle:'italic',marginTop:4}}>"{transcript}"</p>}
+                </div>
+            )}
+        </div>
+    );
+};
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
+</script>
+</body>
+</html>
